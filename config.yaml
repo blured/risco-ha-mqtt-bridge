@@ -1,8 +1,8 @@
-name: Risco MQTT Bridge
+name: Risco HA MQTT Bridge
 version: "1.1.0"
-slug: risco_mqtt_bridge
+slug: risco_ha_mqtt_bridge
 description: Bridge a Risco alarm panel to Home Assistant via MQTT using the Risco REST API
-url: "https://github.com/blured/ha_risco_bridge"
+url: "https://github.com/blured/risco-ha-mqtt-bridge"
 arch:
   - aarch64
   - amd64

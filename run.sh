@@ -20,5 +20,5 @@ EOF
 
 cd /usr/src/app
 
-bashio::log.info "Starting risco-mqtt-home-assistant..."
-exec node bin/risco-mqtt-home-assistant.js
+bashio::log.info "Starting risco-ha-mqtt-bridge..."
+exec node bin/risco-ha-mqtt-bridge.js

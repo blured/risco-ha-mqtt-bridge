@@ -1,4 +1,4 @@
-# risco-mqtt-home-assistant
+# risco-ha-mqtt-bridge
 
 This project is  highly inspired by [risco-mqtt-bridge](https://github.com/lucacalcaterra/risco-mqtt-bridge) by [Luca Calcaterra](https://github.com/lucacalcaterra) but differs from it because it uses Risco REST API sniffed from [iRISCO](https://play.google.com/store/apps/details?id=com.homeguard&hl=it) app. 
 
@@ -6,7 +6,7 @@ This project is  highly inspired by [risco-mqtt-bridge](https://github.com/lucac
 
 Sometimes Risco Cloud Web API (that is the basis on which [risco-mqtt-bridge](https://github.com/lucacalcaterra/risco-mqtt-bridge) was developed) does not respond to sensors change state unless you force the state update of the alarm control panel. So I have decided to change the source of information of risco alarm panel from Web APIs to REST APIs like in the mobile App.
 
-**risco-mqtt-home-assistant** supports also multipartitions.
+**risco-ha-mqtt-bridge** supports also multipartitions.
 
 ## Requirements
 * Node.js (currently tested with >=ver. 10.x)
@@ -25,13 +25,13 @@ Sometimes Risco Cloud Web API (that is the basis on which [risco-mqtt-bridge](ht
 ### As a Home Assistant add-on
 
 1. In Home Assistant, go to **Settings > Add-ons > Add-on Store**.
-2. Open the menu (top right) > **Repositories**, and add this repo's URL: `https://github.com/blured/ha_risco_bridge`.
-3. Find **Risco MQTT Bridge** in the store, install it, fill in the options (Risco credentials, PIN, MQTT connection), and start it.
+2. Open the menu (top right) > **Repositories**, and add this repo's URL: `https://github.com/blured/risco-ha-mqtt-bridge`.
+3. Find **Risco HA MQTT Bridge** in the store, install it, fill in the options (Risco credentials, PIN, MQTT connection), and start it.
 
 ### As a standalone npm package
 
 ```
-npm install risco-mqtt-home-assistant
+npm install risco-ha-mqtt-bridge
 ```
 
 ## Configuration
@@ -55,7 +55,7 @@ Create a file config.json in your project directory.
 
 ## Subscribe Topics
 
-**risco-mqtt-home-assistant** subscribes at startup one topic for every partition in your risco alarm panel configuration.
+**risco-ha-mqtt-bridge** subscribes at startup one topic for every partition in your risco alarm panel configuration.
 
 Topics format is `riscopanel/alarm/<partition_id>/set` where **partition_id** is the id of the partition
 
@@ -63,7 +63,7 @@ Payload could be : **disarmed** if risco panel is in disarmed mode,**armed_home*
 
 ## Publish Topics
 
-risco-mqtt-home-assistant publishes one topic for every partition and for every zones in your risco alarm panel configuration.
+risco-ha-mqtt-bridge publishes one topic for every partition and for every zones in your risco alarm panel configuration.
 
 Partitions topics format is `riscopanel/alarm/<partition_id>/status` where **partition_id** is the id of the partition
 
@@ -73,16 +73,16 @@ Zones topics format is `riscopanel/alarm/<partition_id>/sensor/<zone_id>/status`
 
 Payload could be : **triggered** if zone is curently triggered, and **idle** if zone is currently idle.
 
-In addition to every zones, risco-mqtt-home-assistant publishes a topic for every zone with all the info of the zone in the paylaod in json format. Topics format is `riscopanel/alarm/<partition_id>/sensor/<zone_id>` where **partition_id** is the id of the partition and **zone_id** is the id of the zone.
+In addition to every zones, risco-ha-mqtt-bridge publishes a topic for every zone with all the info of the zone in the paylaod in json format. Topics format is `riscopanel/alarm/<partition_id>/sensor/<zone_id>` where **partition_id** is the id of the partition and **zone_id** is the id of the zone.
 
 ## Home Assistant Auto Discovery
 
-risco-mqtt-home-assistant supports [mqtt auto discovery](https://www.home-assistant.io/docs/mqtt/discovery/) feature.
+risco-ha-mqtt-bridge supports [mqtt auto discovery](https://www.home-assistant.io/docs/mqtt/discovery/) feature.
 
 Default `<discovery_prefix>` is **homeassistant**. You can change it by overwriting the value within **home-assistant-discovery-prefix** config.
 
 ## Usage
 
-To start risco-mqtt-home-assistant you can simply type:
+To start risco-ha-mqtt-bridge you can simply type:
 
-`npx risco-mqtt-home-assistant`
+`npx risco-ha-mqtt-bridge`

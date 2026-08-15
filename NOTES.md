@@ -1,8 +1,8 @@
-# risco-mqtt-home-assistant — Notes
+# risco-ha-mqtt-bridge — Notes
 
 ## What this app does
 
-**risco-mqtt-home-assistant** is a Node.js bridge process that sits between a RISCO
+**risco-ha-mqtt-bridge** is a Node.js bridge process that sits between a RISCO
 alarm panel (accessed via RISCO's cloud REST API — the same one their iRISCO mobile
 app uses) and an MQTT broker, structured so Home Assistant can automatically
 discover and control the alarm panel and its sensors. It's a translation/polling
@@ -12,8 +12,8 @@ Assistant understands.
 
 ### 1. Startup and entry point
 
-- `bin/risco-mqtt-home-assistant.js` is the CLI entrypoint (invoked via
-  `npx risco-mqtt-home-assistant`). It looks for a `config.json` in the current
+- `bin/risco-ha-mqtt-bridge.js` is the CLI entrypoint (invoked via
+  `npx risco-ha-mqtt-bridge`). It looks for a `config.json` in the current
   working directory, `require()`s it as plain JSON, and passes it into the exported
   function from `index.js`. If the file is missing or invalid JSON, it logs an
   error and exits with code 1.

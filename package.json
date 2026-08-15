@@ -1,5 +1,5 @@
 {
-  "name": "risco-mqtt-home-assistant",
+  "name": "risco-ha-mqtt-bridge",
   "version": "1.1.0",
   "description": "Node Risco Mqtt for Home Assistant",
   "main": "index.js",
@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/blured/ha_risco_bridge"
+    "url": "https://github.com/blured/risco-ha-mqtt-bridge"
   },
   "keywords": [
     "risco",
@@ -24,6 +24,6 @@
     "node-risco-client": "^1.0.6"
   },
   "bin": {
-    "risco-mqtt-home-assistant": "./bin/risco-mqtt-home-assistant.js"
+    "risco-ha-mqtt-bridge": "./bin/risco-ha-mqtt-bridge.js"
   }
 }
