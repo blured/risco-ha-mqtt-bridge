@@ -125,6 +125,7 @@ module.exports = (config) => {
     mqttClient.on('connect', () => {
         console.log(`connected on mqtt server: ${mqttURL}`)
         Promise.all([riscoClient.getPartitions(), riscoClient.getZones()]).then(([partitions, zones]) => {
+            console.log(`DEBUG raw partitions (${partitions.length}): ${JSON.stringify(partitions)}`)
             subscribeAlarmStateChange(partitions)
             autoDiscovery(partitions, zones)
         }).catch(err => {
