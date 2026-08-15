@@ -139,10 +139,14 @@ Also converted the topic-derived `partitionId` (a string from the regex match)
 to a `Number` before dispatching commands, since the RISCO API expects a
 numeric partition id matching the type used elsewhere (`partition.id`).
 
-### Known remaining gap (not fixed, flagged only)
+### Resolved since (2026-08-15)
 
-- Home Assistant MQTT discovery payloads for both the alarm panel and binary
-  sensors omit `unique_id`. Without it, entities aren't reliably matched or
-  cleaned up across HA restarts and are more prone to duplication in HA's
-  entity registry. This is a design gap rather than a functional bug and was
-  left as-is pending a decision on device grouping/naming.
+- Risco's cloud `GetState` API stopped populating `state.status.partitions`
+  (returns `null`) at some point after this wrapper was last updated. Fixed
+  by deriving arm state from the still-present system-wide `systemStatus`
+  field instead (`lib/risco-client.js`): `0` disarmed, `1` armed_home,
+  `4` armed_away. See `lib/risco-client.js` for details.
+- Both discovery payloads now set `unique_id` (`risco-alarm-panel-<partition>`
+  style for the panel, `risco-zone-<zoneID>` for sensors), and the alarm
+  panel disables `code_arm_required`/`code_disarm_required` and restricts
+  `supported_features` to the two states this app actually reports.

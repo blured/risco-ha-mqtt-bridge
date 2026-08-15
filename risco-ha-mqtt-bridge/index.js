@@ -85,6 +85,7 @@ module.exports = (config) => {
         for (const partition of partitions) {
             const payload = {
                 'name': `risco-alarm-panel-${partition.id}`,
+                'unique_id': `${RISCO_NODE_ID}-${partition.id}`,
                 'state_topic': `${ALARM_TOPIC}/${partition.id}/status`,
                 'command_topic': `${ALARM_TOPIC}/${partition.id}/set`,
                 'code_arm_required': false,
@@ -100,11 +101,12 @@ module.exports = (config) => {
             const nodeId = zone.zoneName.replace(/ /g, '-')
             const payload = {
                 'name': `${zone.zoneName}`,
+                'unique_id': `risco-zone-${zone.zoneID}`,
                 'payload_on': 'triggered',
                 'payload_off': 'idle',
                 'state_topic': `${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}/status`,
                 'json_attributes_topic': `${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}`
-            }            
+            }
             mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/binary_sensor/${nodeId}/${zone.zoneID}/config`, JSON.stringify(payload))
         }
         console.log(`published ${zones.length} binary_sensor for homeassistant autodiscovery`)
