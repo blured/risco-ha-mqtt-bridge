@@ -3,8 +3,10 @@ jobs:
   build-and-test:
     docker:
       - image: circleci/node:10.16.3
+    working_directory: ~/project/risco_ha_mqtt_bridge
     steps:
-      - checkout     
+      - checkout:
+          path: ~/project
       - restore_cache:
           key: dependency-cache-{{ checksum "package-lock.json" }}
       - run:
