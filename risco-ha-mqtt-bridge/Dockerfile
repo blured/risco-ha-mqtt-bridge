@@ -10,6 +10,7 @@ RUN npm install --omit=dev
 
 COPY index.js ./
 COPY bin ./bin
+COPY lib ./lib
 
 COPY run.sh /
 RUN chmod a+x /run.sh
