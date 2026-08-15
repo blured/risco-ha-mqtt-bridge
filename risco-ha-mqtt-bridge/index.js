@@ -1,5 +1,5 @@
 const mqtt = require('mqtt')
-const nodeRiscoClient = require('node-risco-client')
+const nodeRiscoClient = require('./lib/risco-client')
 
 const ALARM_TOPIC = "riscopanel/alarm"
 const ALARM_TOPIC_REGEX = /^riscopanel\/alarm\/([0-9]+)\/set$/m
@@ -125,7 +125,6 @@ module.exports = (config) => {
     mqttClient.on('connect', () => {
         console.log(`connected on mqtt server: ${mqttURL}`)
         Promise.all([riscoClient.getPartitions(), riscoClient.getZones()]).then(([partitions, zones]) => {
-            console.log(`DEBUG raw partitions (${partitions.length}): ${JSON.stringify(partitions)}`)
             subscribeAlarmStateChange(partitions)
             autoDiscovery(partitions, zones)
         }).catch(err => {

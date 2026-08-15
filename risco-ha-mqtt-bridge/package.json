@@ -21,7 +21,8 @@
   "license": "ISC",
   "dependencies": {
     "mqtt": "^3.0.0",
-    "node-risco-client": "^1.0.6"
+    "request": "^2.88.0",
+    "request-promise-native": "^1.0.7"
   },
   "bin": {
     "risco-ha-mqtt-bridge": "./bin/risco-ha-mqtt-bridge.js"
