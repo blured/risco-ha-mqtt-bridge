@@ -3,7 +3,7 @@ jobs:
   build-and-test:
     docker:
       - image: circleci/node:10.16.3
-    working_directory: ~/project/risco_ha_mqtt_bridge
+    working_directory: ~/project/risco-ha-mqtt-bridge
     steps:
       - checkout:
           path: ~/project
