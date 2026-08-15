@@ -22,6 +22,14 @@ Sometimes Risco Cloud Web API (that is the basis on which [risco-mqtt-bridge](ht
 
 ## Installation
 
+### As a Home Assistant add-on
+
+1. In Home Assistant, go to **Settings > Add-ons > Add-on Store**.
+2. Open the menu (top right) > **Repositories**, and add this repo's URL: `https://github.com/blured/ha_risco_bridge`.
+3. Find **Risco MQTT Bridge** in the store, install it, fill in the options (Risco credentials, PIN, MQTT connection), and start it.
+
+### As a standalone npm package
+
 ```
 npm install risco-mqtt-home-assistant
 ```

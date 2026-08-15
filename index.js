@@ -2,7 +2,7 @@ const mqtt = require('mqtt')
 const nodeRiscoClient = require('node-risco-client')
 
 const ALARM_TOPIC = "riscopanel/alarm"
-const ALARM_TOPIC_REGEX = /^riscopanel\/alarm\/([0-9])*\/set$/m
+const ALARM_TOPIC_REGEX = /^riscopanel\/alarm\/([0-9]+)\/set$/m
 const RISCO_NODE_ID = 'risco-alarm-panel'
 
 module.exports = (config) => {
@@ -31,35 +31,38 @@ module.exports = (config) => {
     const sensorPayload = { 0: 'idle', 1: 'triggered' }
 
     const disarm = async partitionId => {
-        await riscoClient.disarm();
+        await riscoClient.disarm(partitionId);
         mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'disarmed')
         return Promise.resolve('disarmed')
     }
 
     const partiallyArm = async partitionId => {
-        await riscoClient.partiallyArm();
+        await riscoClient.partiallyArm(partitionId);
         mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_home')
         return Promise.resolve('armed_home')
     }
 
     const arm = async partitionId => {
-        await riscoClient.arm();
+        await riscoClient.arm(partitionId);
         mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_away')
-        return Promise.resolve('armed_home')
+        return Promise.resolve('armed_away')
     }
 
     const alarmAction = { 'DISARM': disarm, 'ARM_HOME': partiallyArm, 'ARM_NIGHT': partiallyArm, 'ARM_AWAY': arm }
 
     const changeAlarmStatus = async (code, partitionId) => {
-        return alarmAction[code].call(this, partitionId)
+        return alarmAction[code].call(this, Number(partitionId))
     }
+
+    let pollingInterval
 
     const subscribeAlarmStateChange = (partitions) => {
         for (const partition of partitions) {
             console.log(`subscribe on ${ALARM_TOPIC}/${partition.id}/set topic`)
             mqttClient.subscribe(`${ALARM_TOPIC}/${partition.id}/set`)
         }
-        setInterval(retrieveAlarmStatus, INTERVAL_POLLING);
+        if (pollingInterval) clearInterval(pollingInterval)
+        pollingInterval = setInterval(retrieveAlarmStatus, INTERVAL_POLLING);
     }
 
     const publishAlarmStateChange = (partitions) => {
@@ -91,7 +94,7 @@ module.exports = (config) => {
 
         for (const zone of zones) {
             const partitionId = zone.part - 1
-            const nodeId = zone.zoneName.replace(' ', '-')
+            const nodeId = zone.zoneName.replace(/ /g, '-')
             const payload = {
                 'name': `${zone.zoneName}`,
                 'payload_on': 'triggered',
@@ -113,6 +116,11 @@ module.exports = (config) => {
             console.log(err)
         })
     }
+
+    mqttClient.on('error', err => {
+        console.log(`mqtt client error`)
+        console.log(err)
+    })
 
     mqttClient.on('connect', () => {
         console.log(`connected on mqtt server: ${mqttURL}`)
