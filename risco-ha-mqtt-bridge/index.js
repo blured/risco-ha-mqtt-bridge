@@ -86,7 +86,10 @@ module.exports = (config) => {
             const payload = {
                 'name': `risco-alarm-panel-${partition.id}`,
                 'state_topic': `${ALARM_TOPIC}/${partition.id}/status`,
-                'command_topic': `${ALARM_TOPIC}/${partition.id}/set`
+                'command_topic': `${ALARM_TOPIC}/${partition.id}/set`,
+                'code_arm_required': false,
+                'code_disarm_required': false,
+                'supported_features': ['arm_home', 'arm_away']
             }
             mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/alarm_control_panel/${RISCO_NODE_ID}/${partition.id}/config`, JSON.stringify(payload))
             console.log(`published alarm_control_panel for homeassistant autodiscovery on partition ${partition.id}`)
