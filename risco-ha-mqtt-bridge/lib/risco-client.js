@@ -4,6 +4,11 @@ const ARMED = 3
 const DISARMED = 1
 const PARTIALLY_ARMED = 2
 
+// Maps the cloud API's system-wide `systemStatus` field (GetState) to the
+// old per-partition armedState enum this app publishes to HA, since the
+// `partitions` array is no longer populated (see getState below).
+const SYSTEM_STATUS_TO_ARMED_STATE = { 0: DISARMED, 1: PARTIALLY_ARMED, 4: ARMED }
+
 const LOGIN = 'https://www.riscocloud.com/webapi/api/auth/login'
 const GET_ALL = 'https://www.riscocloud.com/webapi/api/wuws/site/GetAll'
 
@@ -83,17 +88,27 @@ const getState = async (accessToken, sessionToken, siteId) => {
     if (result.status === 401) throw createUnauthorizedError(result.errorText)
 
     let response = result.response
+    let status = response && response.state && response.state.status
 
-    // TEMP DEBUG: dump the raw GetState response so we can see the exact
-    // shape Risco's cloud API returns today (this wrapper hasn't been
-    // updated since 2020 and may be reading stale field names).
-    console.log(`DEBUG raw GetState response: ${JSON.stringify(response)}`)
+    const zones = (status && status.zones) ? status.zones : []
 
-    const partitionsPredicate = !response || !response.state || !response.state.status || !response.state.status.partitions
-    const zonesPredicate = !response || !response.state || !response.state.status || !response.state.status.zones
-
-    const partitions = partitionsPredicate ? [] : response.state.status.partitions
-    const zones = zonesPredicate ? [] : response.state.status.zones
+    // Risco's cloud API no longer populates `status.partitions` for this
+    // panel/firmware; the only remaining arm-state signal is the system-wide
+    // `systemStatus` value. Synthesize a single partition (id 0) from it.
+    let partitions
+    if (status && Array.isArray(status.partitions) && status.partitions.length) {
+        partitions = status.partitions
+    } else if (status) {
+        const armedState = SYSTEM_STATUS_TO_ARMED_STATE[status.systemStatus]
+        if (armedState) {
+            partitions = [{ id: 0, armedState }]
+        } else {
+            console.log(`unrecognized systemStatus value from Risco cloud: ${status.systemStatus}`)
+            partitions = []
+        }
+    } else {
+        partitions = []
+    }
 
     return { partitions, zones }
 }
