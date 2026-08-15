@@ -139,9 +139,9 @@ const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId =
     let response = result.response
 
     // TEMP DEBUG: PartArm silently succeeds (no throw) but doesn't seem to
-    // actually change the panel state. Log the full result to see whether
-    // Risco is rejecting/ignoring the request body shape.
-    console.log(`DEBUG PartArm result: status=${result.status} response=${JSON.stringify(response)}`)
+    // actually change the panel state, and result.response is null. Log the
+    // entire raw result to see if there's an error code/field we're missing.
+    console.log(`DEBUG PartArm full result: ${JSON.stringify(result)}`)
 
     const partitions = (!response || !response.partitions) ? [] : response.partitions
     const zones = (!response || !response.zones) ? [] : response.zones
