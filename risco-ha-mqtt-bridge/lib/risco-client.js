@@ -209,7 +209,11 @@ module.exports = (config) => {
     }
 
     const arm = async (partitionId) => {
-        return _setAlarmState(ARMED, partitionId)
+        // TEMP TEST: armedState=3 (old PartArm convention) was accepted
+        // (result:0) but didn't change systemStatus. Testing whether the
+        // Arm endpoint actually wants the GetState-style code instead (4,
+        // the confirmed "Set"/armed_away systemStatus value).
+        return _setAlarmState(4, partitionId)
     }
 
     const partiallyArm = async (partitionId) => {
