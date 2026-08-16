@@ -88,9 +88,10 @@ module.exports = (config) => {
                 'unique_id': `${RISCO_NODE_ID}-${partition.id}`,
                 'state_topic': `${ALARM_TOPIC}/${partition.id}/status`,
                 'command_topic': `${ALARM_TOPIC}/${partition.id}/set`,
+                'code': pin,
                 'code_arm_required': false,
-                'code_disarm_required': false,
-                'supported_features': ['arm_home', 'arm_away']
+                'code_disarm_required': true,
+                'supported_features': ['arm_home', 'arm_night', 'arm_away']
             }
             mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/alarm_control_panel/${RISCO_NODE_ID}/${partition.id}/config`, JSON.stringify(payload))
             console.log(`published alarm_control_panel for homeassistant autodiscovery on partition ${partition.id}`)
