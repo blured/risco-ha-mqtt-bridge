@@ -171,9 +171,14 @@ const legacyGetCPState = async (jar) => {
     if (result.statusCode >= 400) throw new Error(`legacy GetCPState failed with status ${result.statusCode}: ${result.body}`)
 
     const body = JSON.parse(result.body)
+
+    // TEMP DEBUG: GetCPState's response shape was assumed to match
+    // ArmDisarm's (which does have overview.partInfo) but that's unverified
+    // - it's coming back empty, so log the whole thing to see the real shape.
+    console.log(`DEBUG GetCPState body: ${result.body}`)
+
     const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
     if (!armedState) {
-        console.log(`unrecognized legacy partInfo: ${JSON.stringify(body.overview && body.overview.partInfo)}`)
         return []
     }
     return [{ id: 0, armedState }]
