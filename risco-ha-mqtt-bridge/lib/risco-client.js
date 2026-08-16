@@ -116,6 +116,9 @@ const legacyLogin = async (username, password) => {
 }
 
 const legacySiteLogin = async (jar, siteId, pinCode) => {
+    // Unlike ArmDisarm/Overview.Get (JSON APIs), this is a classic MVC form
+    // POST that redirects to MainPage on success - don't disable
+    // followRedirect here, only the JSON endpoints below need that.
     const result = await request({
         method: 'POST',
         url: `${LEGACY_BASE}/SiteLogin`,
@@ -150,10 +153,17 @@ const legacyArmDisarm = async (jar, armedState) => {
         jar,
         form: { type, bypassZoneId: -1 },
         resolveWithFullResponse: true,
-        simple: false
+        simple: false,
+        // Success always returns 200 JSON directly for this endpoint. A
+        // session-expired request instead 302s to a login page, which
+        // request would otherwise follow silently, turning the expiry into
+        // a fake 200 - disable that so the redirect surfaces as a real error.
+        followRedirect: false
     })
 
-    if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    if (result.statusCode === 401 || result.statusCode === 403 || (result.statusCode >= 300 && result.statusCode < 400)) {
+        throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    }
     if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
 }
 
@@ -168,13 +178,28 @@ const legacyGetOverview = async (jar) => {
         jar,
         form: {},
         resolveWithFullResponse: true,
-        simple: false
+        simple: false,
+        // Same reasoning as ArmDisarm: success is always 200 JSON, a
+        // session-expired request 302s to a login page instead.
+        followRedirect: false
     })
 
-    if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    if (result.statusCode === 401 || result.statusCode === 403 || (result.statusCode >= 300 && result.statusCode < 400)) {
+        throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    }
     if (result.statusCode >= 400) throw new Error(`legacy Overview/Get failed with status ${result.statusCode}: ${result.body}`)
 
-    const body = JSON.parse(result.body)
+    let body
+    try {
+        body = JSON.parse(result.body)
+    } catch (e) {
+        // Defensive fallback: an unexpected non-JSON response (e.g. a login
+        // page that slipped through) is treated the same as a session
+        // expiry so the caller retries after a fresh login instead of
+        // getting stuck failing the same way forever.
+        throw createUnauthorizedError(`legacy Overview/Get returned non-JSON response: ${e.message}`)
+    }
+
     const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
     if (!armedState) {
         console.log(`unrecognized legacy partInfo: ${JSON.stringify(body.overview && body.overview.partInfo)}`)

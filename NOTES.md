@@ -164,3 +164,14 @@ numeric partition id matching the type used elsewhere (`partition.id`).
   works reliably for both. See `legacy*` functions in `lib/risco-client.js`
   and the `project-risco-cloud-api-state` memory for the full endpoint
   reference. `wuws` is still used for login and zone status only.
+- **Session-expiry bug (2026-08-17):** `legacyArmDisarm`/`legacyGetOverview`
+  used `request`'s default redirect-following behavior. When the legacy
+  portal's session cookie expires, those endpoints 302-redirect to a login
+  page instead of returning 401 - `request` silently followed it, turning
+  the expiry into a fake `200` response with an HTML body instead of JSON.
+  For `getPartitions` this crashed `JSON.parse` with an error that didn't
+  carry `statusCode: 401`, so the existing relogin-and-retry logic never
+  triggered and polling just kept failing the same way until the add-on was
+  restarted. Fixed by setting `followRedirect: false` on both calls (so a
+  3xx surfaces as a real status code) and wrapping the `JSON.parse` in a
+  try/catch that also triggers a relogin as a defensive fallback.
