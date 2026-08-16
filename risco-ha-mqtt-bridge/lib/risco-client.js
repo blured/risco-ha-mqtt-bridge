@@ -114,7 +114,11 @@ const getState = async (accessToken, sessionToken, siteId) => {
 }
 
 const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId = 0) => {
-    const CONTROL_PANEL = `https://www.riscocloud.com/webapi/api/wuws/site/${siteId}/ControlPanel/PartArm`
+    // This panel doesn't support partitions - PartArm returns
+    // errorText: "The control panel does not support partitions. You need
+    // to use the Arm action to perform arming operations." Use the
+    // whole-panel Arm endpoint instead.
+    const CONTROL_PANEL = `https://www.riscocloud.com/webapi/api/wuws/site/${siteId}/ControlPanel/Arm`
 
     let result = await request({
         method: 'POST',
@@ -124,12 +128,7 @@ const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId =
             'Authorization': `Bearer ${accessToken}`,
         },
         body: {
-            "partitions": [
-                {
-                    "id": partitionId,
-                    "armedState": status
-                }
-            ],
+            "armedState": status,
             "sessionToken": `${sessionToken}`
         }
     })
@@ -138,10 +137,8 @@ const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId =
 
     let response = result.response
 
-    // TEMP DEBUG: PartArm silently succeeds (no throw) but doesn't seem to
-    // actually change the panel state, and result.response is null. Log the
-    // entire raw result to see if there's an error code/field we're missing.
-    console.log(`DEBUG PartArm full result: ${JSON.stringify(result)}`)
+    // TEMP DEBUG: verifying the Arm endpoint's request/response shape.
+    console.log(`DEBUG Arm full result: ${JSON.stringify(result)}`)
 
     const partitions = (!response || !response.partitions) ? [] : response.partitions
     const zones = (!response || !response.zones) ? [] : response.zones
