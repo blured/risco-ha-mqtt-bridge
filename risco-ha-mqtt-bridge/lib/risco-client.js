@@ -4,23 +4,17 @@ const ARMED = 3
 const DISARMED = 1
 const PARTIALLY_ARMED = 2
 
-// Maps the cloud API's system-wide `systemStatus` field (GetState) to the
-// old per-partition armedState enum this app publishes to HA, since the
-// `partitions` array is no longer populated (see getState below). Both 1
-// and 2 have been observed for partial/Perimeter arm (2 confirmed via
-// ELArm2, 1 from an earlier physical-panel test) - map both to be safe.
-const SYSTEM_STATUS_TO_ARMED_STATE = { 0: DISARMED, 1: PARTIALLY_ARMED, 2: PARTIALLY_ARMED, 4: ARMED }
-
 const LOGIN = 'https://www.riscocloud.com/webapi/api/auth/login'
 const GET_ALL = 'https://www.riscocloud.com/webapi/api/wuws/site/GetAll'
 
-// The modern wuws ControlPanel/Arm endpoint returns result:0 (success) for
-// this panel without ever actually changing systemStatus - no combination of
-// armedState values we tried had any effect except disarm. The legacy
-// cookie-based web portal (webui.riscocloud.com) still works reliably for
-// arm/disarm (confirmed by capturing its real requests), so arm/disarm
-// commands go through it instead. Status polling (getState below) is
-// unaffected and keeps using the modern API.
+// The modern wuws API is only used for login and zone status now. Its
+// ControlPanel/Arm endpoint accepts requests (result:0) without ever
+// actually changing the panel's state, and its GetState systemStatus field
+// doesn't reliably distinguish partial vs full arm on this panel (both
+// reported systemStatus:2 in testing). The legacy cookie-based web portal
+// (webui.riscocloud.com) works reliably for both arm/disarm commands and
+// arm-state reporting (confirmed by capturing its real requests), so it's
+// used for those instead.
 const LEGACY_BASE = 'https://webui.riscocloud.com'
 const LEGACY_ARM_TYPE = {
     [DISARMED]: '-1:disarmed',
@@ -85,7 +79,7 @@ const login = async (username, password, pin, languageId) => {
     return { accessToken, sessionId, siteId }
 }
 
-const getState = async (accessToken, sessionToken, siteId) => {
+const getZoneState = async (accessToken, sessionToken, siteId) => {
     const GET_STATE = `https://www.riscocloud.com/webapi/api/wuws/site/${siteId}/ControlPanel/GetState`
 
     let result = await request({
@@ -103,30 +97,8 @@ const getState = async (accessToken, sessionToken, siteId) => {
 
     if (result.status === 401) throw createUnauthorizedError(result.errorText)
 
-    let response = result.response
-    let status = response && response.state && response.state.status
-
-    const zones = (status && status.zones) ? status.zones : []
-
-    // Risco's cloud API no longer populates `status.partitions` for this
-    // panel/firmware; the only remaining arm-state signal is the system-wide
-    // `systemStatus` value. Synthesize a single partition (id 0) from it.
-    let partitions
-    if (status && Array.isArray(status.partitions) && status.partitions.length) {
-        partitions = status.partitions
-    } else if (status) {
-        const armedState = SYSTEM_STATUS_TO_ARMED_STATE[status.systemStatus]
-        if (armedState) {
-            partitions = [{ id: 0, armedState }]
-        } else {
-            console.log(`unrecognized systemStatus value from Risco cloud: ${status.systemStatus}`)
-            partitions = []
-        }
-    } else {
-        partitions = []
-    }
-
-    return { partitions, zones }
+    let status = result.response && result.response.state && result.response.state.status
+    return (status && status.zones) ? status.zones : []
 }
 
 const legacyLogin = async (username, password) => {
@@ -155,6 +127,19 @@ const legacySiteLogin = async (jar, siteId, pinCode) => {
     if (result.statusCode >= 400) throw createUnauthorizedError(`legacy site login failed with status ${result.statusCode}`)
 }
 
+// wuws's systemStatus field doesn't reliably distinguish partial vs full
+// arm on this panel (both reported systemStatus:2 in testing), but the
+// legacy portal's own partInfo strings are unambiguous. Use them as the
+// source of truth for arm state.
+const parseLegacyPartInfo = (partInfo) => {
+    if (!partInfo) return null
+    const isYes = str => typeof str === 'string' && str.trim() === 'Yes'
+    if (isYes(partInfo.armedStr)) return ARMED
+    if (isYes(partInfo.partarmedStr)) return PARTIALLY_ARMED
+    if (isYes(partInfo.disarmedStr)) return DISARMED
+    return null
+}
+
 const legacyArmDisarm = async (jar, armedState) => {
     const type = LEGACY_ARM_TYPE[armedState]
     if (!type) throw new Error(`no legacy arm type mapped for armedState ${armedState}`)
@@ -168,13 +153,30 @@ const legacyArmDisarm = async (jar, armedState) => {
         simple: false
     })
 
-    // TEMP DEBUG: ELArm1 (full arm) is accepted (no error) but the panel
-    // settles into armed_home (systemStatus 2) instead of armed_away (4).
-    // Need to see the raw response to know why.
-    console.log(`DEBUG legacy ArmDisarm sent type=${type}, status=${result.statusCode}, body=${result.body}`)
-
     if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
     if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
+}
+
+const legacyGetCPState = async (jar) => {
+    const result = await request({
+        method: 'POST',
+        url: `${LEGACY_BASE}/Security/GetCPState`,
+        jar,
+        form: {},
+        resolveWithFullResponse: true,
+        simple: false
+    })
+
+    if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    if (result.statusCode >= 400) throw new Error(`legacy GetCPState failed with status ${result.statusCode}: ${result.body}`)
+
+    const body = JSON.parse(result.body)
+    const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
+    if (!armedState) {
+        console.log(`unrecognized legacy partInfo: ${JSON.stringify(body.overview && body.overview.partInfo)}`)
+        return []
+    }
+    return [{ id: 0, armedState }]
 }
 
 module.exports = (config) => {
@@ -212,14 +214,12 @@ module.exports = (config) => {
     }
 
     const getPartitions = async () => {
-        if (!logged) await _login()
+        if (!legacyLogged) await _legacyLogin()
 
-        return getState(accessToken, sessionId, siteId).then(result => {
-            return result.partitions
-        }).catch(error => {
+        return legacyGetCPState(legacyJar).catch(error => {
             if (error.statusCode === 401) {
-                console.log('refreshing login due to session expired or invalid token retrieving partitions')
-                logged = false
+                console.log('refreshing legacy session due to expiry retrieving partitions')
+                legacyLogged = false
                 return getPartitions()
             }
             throw new Error(error)
@@ -228,9 +228,7 @@ module.exports = (config) => {
 
     const getZones = async () => {
         if (!logged) await _login()
-        return getState(accessToken, sessionId, siteId).then(result => {
-            return result.zones
-        }).catch(error => {
+        return getZoneState(accessToken, sessionId, siteId).catch(error => {
             if (error.statusCode === 401) {
                 console.log('refreshing login due to session expired or invalid token retrieving zones')
                 logged = false;
