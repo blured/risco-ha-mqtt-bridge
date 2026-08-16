@@ -138,6 +138,12 @@ const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId =
 
     let response = result.response
 
+    // TEMP DEBUG: armedState=1 (disarm) confirmed working, but armedState=2
+    // silently doesn't change the panel despite result:0. Need to see the
+    // returned systemStatus for each armedState we try, without dumping the
+    // full response (which contains PII like user names/PINs).
+    console.log(`DEBUG Arm sent armedState=${status}, API result=${result.result}, returned systemStatus=${response && response.systemStatus}, armNotAllowed=${response && response.armNotAllowed}, disarmNotAllowed=${response && response.disarmNotAllowed}`)
+
     const partitions = (!response || !response.partitions) ? [] : response.partitions
     const zones = (!response || !response.zones) ? [] : response.zones
     return { partitions, zones }
