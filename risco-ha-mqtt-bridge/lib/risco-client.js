@@ -158,9 +158,13 @@ const legacyArmDisarm = async (jar, armedState) => {
 }
 
 const legacyGetCPState = async (jar) => {
+    // Security/GetCPState returns overview:null on its own - the dashboard's
+    // own JS fetches partInfo via a separate call to Overview/Get instead
+    // (ArmDisarm's response happens to bundle its own overview refresh,
+    // which is why that one looked like it had partInfo).
     const result = await request({
         method: 'POST',
-        url: `${LEGACY_BASE}/Security/GetCPState`,
+        url: `${LEGACY_BASE}/Overview/Get`,
         jar,
         form: {},
         resolveWithFullResponse: true,
@@ -168,14 +172,13 @@ const legacyGetCPState = async (jar) => {
     })
 
     if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
-    if (result.statusCode >= 400) throw new Error(`legacy GetCPState failed with status ${result.statusCode}: ${result.body}`)
+    if (result.statusCode >= 400) throw new Error(`legacy Overview/Get failed with status ${result.statusCode}: ${result.body}`)
 
     const body = JSON.parse(result.body)
 
-    // TEMP DEBUG: GetCPState's response shape was assumed to match
-    // ArmDisarm's (which does have overview.partInfo) but that's unverified
-    // - it's coming back empty, so log the whole thing to see the real shape.
-    console.log(`DEBUG GetCPState body: ${result.body}`)
+    // TEMP DEBUG: verifying Overview/Get's response shape actually has
+    // partInfo before removing this.
+    console.log(`DEBUG Overview/Get body: ${result.body}`)
 
     const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
     if (!armedState) {
