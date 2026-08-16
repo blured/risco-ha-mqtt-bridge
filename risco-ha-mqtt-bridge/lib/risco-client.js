@@ -12,6 +12,20 @@ const SYSTEM_STATUS_TO_ARMED_STATE = { 0: DISARMED, 1: PARTIALLY_ARMED, 4: ARMED
 const LOGIN = 'https://www.riscocloud.com/webapi/api/auth/login'
 const GET_ALL = 'https://www.riscocloud.com/webapi/api/wuws/site/GetAll'
 
+// The modern wuws ControlPanel/Arm endpoint returns result:0 (success) for
+// this panel without ever actually changing systemStatus - no combination of
+// armedState values we tried had any effect except disarm. The legacy
+// cookie-based web portal (webui.riscocloud.com) still works reliably for
+// arm/disarm (confirmed by capturing its real requests), so arm/disarm
+// commands go through it instead. Status polling (getState below) is
+// unaffected and keeps using the modern API.
+const LEGACY_BASE = 'https://webui.riscocloud.com'
+const LEGACY_ARM_TYPE = {
+    [DISARMED]: '-1:disarmed',
+    [PARTIALLY_ARMED]: 'ELArm2',
+    [ARMED]: 'ELArm1'
+}
+
 const createUnauthorizedError = message => {
     let err = new Error(message);
     err.statusCode = 401;
@@ -113,44 +127,52 @@ const getState = async (accessToken, sessionToken, siteId) => {
     return { partitions, zones }
 }
 
-const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId = 0) => {
-    // This panel doesn't support partitions - PartArm returns
-    // errorText: "The control panel does not support partitions. You need
-    // to use the Arm action to perform arming operations." Use the
-    // whole-panel Arm endpoint instead.
-    const CONTROL_PANEL = `https://www.riscocloud.com/webapi/api/wuws/site/${siteId}/ControlPanel/Arm`
-
-    let result = await request({
+const legacyLogin = async (username, password) => {
+    const jar = request.jar()
+    await request({
         method: 'POST',
-        url: CONTROL_PANEL,
-        json: true,
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-        },
-        body: {
-            "armedState": status,
-            "sessionToken": `${sessionToken}`
-        }
+        url: `${LEGACY_BASE}/`,
+        jar,
+        form: { username, password, RememberMe: 'false' },
+        resolveWithFullResponse: true,
+        simple: false,
+        followAllRedirects: true
+    })
+    return jar
+}
+
+const legacySiteLogin = async (jar, siteId, pinCode) => {
+    const result = await request({
+        method: 'POST',
+        url: `${LEGACY_BASE}/SiteLogin`,
+        jar,
+        form: { SelectedSiteId: siteId, Pin: pinCode },
+        resolveWithFullResponse: true,
+        simple: false
+    })
+    if (result.statusCode >= 400) throw createUnauthorizedError(`legacy site login failed with status ${result.statusCode}`)
+}
+
+const legacyArmDisarm = async (jar, armedState) => {
+    const type = LEGACY_ARM_TYPE[armedState]
+    if (!type) throw new Error(`no legacy arm type mapped for armedState ${armedState}`)
+
+    const result = await request({
+        method: 'POST',
+        url: `${LEGACY_BASE}/Security/ArmDisarm`,
+        jar,
+        form: { type, bypassZoneId: -1 },
+        resolveWithFullResponse: true,
+        simple: false
     })
 
-    if (result.status === 401) throw createUnauthorizedError(result.errorText)
-    if (result.result !== 0) throw new Error(result.errorText || `Arm request failed with result code ${result.result}`)
-
-    let response = result.response
-
-    // TEMP DEBUG: armedState=1 (disarm) confirmed working, but armedState=2
-    // silently doesn't change the panel despite result:0. Need to see the
-    // returned systemStatus for each armedState we try, without dumping the
-    // full response (which contains PII like user names/PINs).
-    console.log(`DEBUG Arm sent armedState=${status}, API result=${result.result}, returned systemStatus=${response && response.systemStatus}, armNotAllowed=${response && response.armNotAllowed}, disarmNotAllowed=${response && response.disarmNotAllowed}`)
-
-    const partitions = (!response || !response.partitions) ? [] : response.partitions
-    const zones = (!response || !response.zones) ? [] : response.zones
-    return { partitions, zones }
+    if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
+    if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
 }
 
 module.exports = (config) => {
     let accessToken, sessionId, siteId, logged
+    let legacyJar, legacyLogged
     let { username, password, pin, languageId } = config
     if (!username) throw new Error('username options is required')
     if (!password) throw new Error('password options is required')
@@ -163,12 +185,19 @@ module.exports = (config) => {
         return { accessToken, sessionId, siteId }
     }
 
-    const _setAlarmState = async (state, partitionId) => {
+    const _legacyLogin = async () => {
         if (!logged) await _login()
-        return setAlarm(accessToken, sessionId, siteId, state, partitionId).catch(error => {
+        legacyJar = await legacyLogin(username, password)
+        await legacySiteLogin(legacyJar, siteId, pin)
+        legacyLogged = true
+    }
+
+    const _setAlarmState = async (state, partitionId) => {
+        if (!legacyLogged) await _legacyLogin()
+        return legacyArmDisarm(legacyJar, state).catch(error => {
             if (error.statusCode === 401) {
-                console.log('refreshing login due to session expired or invalid token during setting alarm state')
-                logged = false;
+                console.log('refreshing legacy session due to expiry during setting alarm state')
+                legacyLogged = false;
                 return _setAlarmState(state, partitionId)
             }
             throw new Error(error)
@@ -209,11 +238,7 @@ module.exports = (config) => {
     }
 
     const arm = async (partitionId) => {
-        // TEMP TEST: armedState=3 (old PartArm convention) was accepted
-        // (result:0) but didn't change systemStatus. Testing whether the
-        // Arm endpoint actually wants the GetState-style code instead (4,
-        // the confirmed "Set"/armed_away systemStatus value).
-        return _setAlarmState(4, partitionId)
+        return _setAlarmState(ARMED, partitionId)
     }
 
     const partiallyArm = async (partitionId) => {
