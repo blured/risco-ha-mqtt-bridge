@@ -157,7 +157,7 @@ const legacyArmDisarm = async (jar, armedState) => {
     if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
 }
 
-const legacyGetCPState = async (jar) => {
+const legacyGetOverview = async (jar) => {
     // Security/GetCPState returns overview:null on its own - the dashboard's
     // own JS fetches partInfo via a separate call to Overview/Get instead
     // (ArmDisarm's response happens to bundle its own overview refresh,
@@ -175,13 +175,9 @@ const legacyGetCPState = async (jar) => {
     if (result.statusCode >= 400) throw new Error(`legacy Overview/Get failed with status ${result.statusCode}: ${result.body}`)
 
     const body = JSON.parse(result.body)
-
-    // TEMP DEBUG: verifying Overview/Get's response shape actually has
-    // partInfo before removing this.
-    console.log(`DEBUG Overview/Get body: ${result.body}`)
-
     const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
     if (!armedState) {
+        console.log(`unrecognized legacy partInfo: ${JSON.stringify(body.overview && body.overview.partInfo)}`)
         return []
     }
     return [{ id: 0, armedState }]
@@ -224,7 +220,7 @@ module.exports = (config) => {
     const getPartitions = async () => {
         if (!legacyLogged) await _legacyLogin()
 
-        return legacyGetCPState(legacyJar).catch(error => {
+        return legacyGetOverview(legacyJar).catch(error => {
             if (error.statusCode === 401) {
                 console.log('refreshing legacy session due to expiry retrieving partitions')
                 legacyLogged = false

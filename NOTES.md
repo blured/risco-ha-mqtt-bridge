@@ -151,12 +151,16 @@ numeric partition id matching the type used elsewhere (`partition.id`).
   panel disables `code_arm_required`/`code_disarm_required` and restricts
   `supported_features` to the two states this app actually reports.
 - Arm/disarm commands used the `PartArm` endpoint, which this panel's cloud
-  API now rejects with `errorText: "The control panel does not support
+  API rejects with `errorText: "The control panel does not support
   partitions. You need to use the Arm action to perform arming operations."`
-  Confirmed via live testing (2026-08-16) that HTTP 200 was returned either
-  way, but only the API's own `result` field (0 = success, nonzero = error)
-  actually indicates whether the command took effect — `setAlarm` previously
-  ignored this and treated any 200 as success, so disarm silently no-opped.
-  Switched to `POST .../ControlPanel/Arm` with a flat `{armedState,
-  sessionToken}` body (no partitions wrapper), and now throws when
-  `result.result !== 0`.
+  The suggested `ControlPanel/Arm` endpoint turned out to be a dead end too:
+  it accepts any armedState value (`result: 0`, i.e. "success") without ever
+  actually changing the panel, and `GetState`'s `systemStatus` field can't
+  reliably distinguish partial vs full arm either (both reported the same
+  value in testing).
+- **Final fix (2026-08-16): arm/disarm and arm-state reporting now go
+  through a second, legacy cookie-based API** at `webui.riscocloud.com`
+  (Risco's older web portal, distinct from the modern `wuws` API), which
+  works reliably for both. See `legacy*` functions in `lib/risco-client.js`
+  and the `project-risco-cloud-api-state` memory for the full endpoint
+  reference. `wuws` is still used for login and zone status only.
