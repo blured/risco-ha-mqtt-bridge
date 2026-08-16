@@ -168,6 +168,11 @@ const legacyArmDisarm = async (jar, armedState) => {
         simple: false
     })
 
+    // TEMP DEBUG: ELArm1 (full arm) is accepted (no error) but the panel
+    // settles into armed_home (systemStatus 2) instead of armed_away (4).
+    // Need to see the raw response to know why.
+    console.log(`DEBUG legacy ArmDisarm sent type=${type}, status=${result.statusCode}, body=${result.body}`)
+
     if (result.statusCode === 401 || result.statusCode === 403) throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
     if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
 }
