@@ -6,8 +6,10 @@ const PARTIALLY_ARMED = 2
 
 // Maps the cloud API's system-wide `systemStatus` field (GetState) to the
 // old per-partition armedState enum this app publishes to HA, since the
-// `partitions` array is no longer populated (see getState below).
-const SYSTEM_STATUS_TO_ARMED_STATE = { 0: DISARMED, 1: PARTIALLY_ARMED, 4: ARMED }
+// `partitions` array is no longer populated (see getState below). Both 1
+// and 2 have been observed for partial/Perimeter arm (2 confirmed via
+// ELArm2, 1 from an earlier physical-panel test) - map both to be safe.
+const SYSTEM_STATUS_TO_ARMED_STATE = { 0: DISARMED, 1: PARTIALLY_ARMED, 2: PARTIALLY_ARMED, 4: ARMED }
 
 const LOGIN = 'https://www.riscocloud.com/webapi/api/auth/login'
 const GET_ALL = 'https://www.riscocloud.com/webapi/api/wuws/site/GetAll'
