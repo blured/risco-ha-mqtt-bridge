@@ -134,11 +134,9 @@ const setAlarm = async (accessToken, sessionToken, siteId, status, partitionId =
     })
 
     if (result.status === 401) throw createUnauthorizedError(result.errorText)
+    if (result.result !== 0) throw new Error(result.errorText || `Arm request failed with result code ${result.result}`)
 
     let response = result.response
-
-    // TEMP DEBUG: verifying the Arm endpoint's request/response shape.
-    console.log(`DEBUG Arm full result: ${JSON.stringify(result)}`)
 
     const partitions = (!response || !response.partitions) ? [] : response.partitions
     const zones = (!response || !response.zones) ? [] : response.zones

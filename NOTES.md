@@ -150,3 +150,13 @@ numeric partition id matching the type used elsewhere (`partition.id`).
   style for the panel, `risco-zone-<zoneID>` for sensors), and the alarm
   panel disables `code_arm_required`/`code_disarm_required` and restricts
   `supported_features` to the two states this app actually reports.
+- Arm/disarm commands used the `PartArm` endpoint, which this panel's cloud
+  API now rejects with `errorText: "The control panel does not support
+  partitions. You need to use the Arm action to perform arming operations."`
+  Confirmed via live testing (2026-08-16) that HTTP 200 was returned either
+  way, but only the API's own `result` field (0 = success, nonzero = error)
+  actually indicates whether the command took effect — `setAlarm` previously
+  ignored this and treated any 200 as success, so disarm silently no-opped.
+  Switched to `POST .../ControlPanel/Arm` with a flat `{armedState,
+  sessionToken}` body (no partitions wrapper), and now throws when
+  `result.result !== 0`.
