@@ -114,12 +114,16 @@ module.exports = (config) => {
     }
 
     const retrieveAlarmStatus = () => {
-        Promise.all([riscoClient.getPartitions(), riscoClient.getZones()]).then(([partitions, zones]) => {
-            publishAlarmStateChange(partitions)
-            publishSensorsStateChange(zones)
-        }).catch(err => {
-            console.log(`error during retrieve status fo partitions and zones`)
-            console.log(err)
+        // Settled rather than all: the partitions come from the legacy portal
+        // and the zones from the wuws API, so one being down shouldn't stop
+        // the other being published. Losing the door sensors because the
+        // panel's arm state is unavailable is the worse outcome.
+        Promise.allSettled([riscoClient.getPartitions(), riscoClient.getZones()]).then(([partitions, zones]) => {
+            if (partitions.status === 'fulfilled') publishAlarmStateChange(partitions.value)
+            else console.log(`error retrieving partitions: ${partitions.reason}`)
+
+            if (zones.status === 'fulfilled') publishSensorsStateChange(zones.value)
+            else console.log(`error retrieving zones: ${zones.reason}`)
         })
     }
 

@@ -175,3 +175,71 @@ numeric partition id matching the type used elsewhere (`partition.id`).
   restarted. Fixed by setting `followRedirect: false` on both calls (so a
   3xx surfaces as a real status code) and wrapping the `JSON.parse` in a
   try/catch that also triggers a relogin as a defensive fallback.
+
+### Stopped working (2026-09-26) — legacy portal changed its session-expiry response
+
+**Symptom:** the alarm panel entity stops updating and can't be armed or
+disarmed, while the zone binary sensors keep working normally. The add-on log
+shows `unrecognized legacy partInfo: null` repeating every poll and never a
+relogin line.
+
+**Cause:** the 2026-08-17 fix above assumed an expired legacy session makes
+`Overview/Get` and `Security/ArmDisarm` 302-redirect to a login page, and
+detected the expiry from the status code. Risco's portal no longer does that —
+an unauthenticated call to either endpoint now returns a plain `200` with
+`Content-Type: application/json` and a body of `{"error":3,"overview":null}`
+(verified 2026-09-26 by calling both endpoints with no session cookie). The
+status-code checks therefore never fire, and:
+
+- `legacyGetOverview` parsed that body fine, found `overview` null, logged
+  `unrecognized legacy partInfo` and **returned `[]`**. An empty partition list
+  is not an error anywhere upstream, so `publishAlarmStateChange` published no
+  state, `subscribeAlarmStateChange` subscribed to no command topic, and
+  `autoDiscovery` published no `alarm_control_panel` — the panel silently
+  disappeared while zones (which come from the separate `wuws` API) kept going.
+  Because no 401 was ever raised, the relogin never ran, so the add-on stayed
+  broken until restarted.
+- `legacyArmDisarm` saw the same `200` and treated it as **success**, so
+  `index.js` optimistically published the new state to MQTT. Home Assistant
+  showed the arm/disarm as having worked while the panel never moved — the
+  more dangerous half of this bug.
+
+**Fixes (`lib/risco-client.js`):**
+
+1. Both legacy endpoints now check the body's `error` field.
+   `error: 3` (`LEGACY_ERROR_SESSION_EXPIRED`) raises the 401-style error that
+   drives the existing relogin-and-retry; any other non-zero `error` raises a
+   plain error instead of being ignored.
+2. `legacyGetOverview` no longer returns `[]` on an unparseable overview — a
+   missing `overview` or unrecognized `partInfo` now throws, so a future
+   response-shape change fails loudly instead of quietly removing the panel.
+3. `legacySiteLogin` checks the redirect target. Success 302s to `MainPage`;
+   a rejected login 302s to `UserLogin`/`SessionExpired` with the same status
+   code, which previously still set `legacyLogged = true`.
+4. The relogin recursion in `getPartitions`, `getZones` and `_setAlarmState` is
+   capped at one retry. It was unbounded, so a permanently failing login would
+   re-login on every 5s poll — and `POST /api/auth/login` enforces a 5-attempt
+   lockout (its response carries `currentLoginAttempt`/`maxLoginAttempts`), so
+   the old code could lock the Risco account out on its own.
+5. The `wuws` login now surfaces the API's `errorText` (e.g. `invalid custom
+   credential`) instead of the generic `no accessToken has been returned`,
+   since that endpoint returns `200` with the real outcome in the body.
+
+Also replaced `throw new Error(error)` in the three retry handlers with
+`throw error` — the old form stringified the error, discarding its
+`statusCode` and stack.
+
+6. `retrieveAlarmStatus` now uses `Promise.allSettled` instead of `Promise.all`.
+   Partitions come from the legacy portal and zones from the `wuws` API; with
+   `getPartitions` able to reject (it previously swallowed the failure and
+   returned `[]`), one API being down would otherwise have stopped the zone
+   sensors publishing too.
+
+**Confirmed against the live add-on (2026-09-26):** the log was solid
+`unrecognized legacy partInfo: null` with zero `refreshing legacy session`
+lines, and `alarm_control_panel.risco_alarm_panel_0` was `unavailable` with
+`restored: true` while the zone binary sensors stayed live — i.e. the add-on
+was running and publishing zones, but `getPartitions()` returned `[]` on every
+poll so the panel was never discovered. Discovery payloads are published
+without the retain flag, which is why the panel entity disappears entirely
+rather than going stale.

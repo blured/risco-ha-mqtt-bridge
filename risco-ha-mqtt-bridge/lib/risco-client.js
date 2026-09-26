@@ -22,6 +22,13 @@ const LEGACY_ARM_TYPE = {
     [ARMED]: 'ELArm1'
 }
 
+// The legacy portal used to 302 to a login page when its session cookie
+// expired. It now answers an unauthenticated JSON call with a plain 200 and
+// an `error: 3` body instead (`{"error":3,"overview":null}`), so the status
+// code alone no longer detects an expiry - the `error` field has to be
+// checked too. See the 2026-09-26 entry in NOTES.md.
+const LEGACY_ERROR_SESSION_EXPIRED = 3
+
 const createUnauthorizedError = message => {
     let err = new Error(message);
     err.statusCode = 401;
@@ -31,7 +38,7 @@ const createUnauthorizedError = message => {
 const login = async (username, password, pin, languageId) => {
     let response
 
-    ({ response } = await request({
+    const loginBody = await request({
         method: 'POST',
         url: LOGIN,
         json: true,
@@ -39,9 +46,17 @@ const login = async (username, password, pin, languageId) => {
             "userName": `${username}`,
             "password": `${password}`
         }
-    }))
+    })
 
-    const { accessToken } = response
+    // This endpoint answers 200 even for a rejected login, putting the real
+    // outcome in the body. It also counts failures towards a 5-attempt
+    // lockout, so log what it actually said rather than a generic failure.
+    if (loginBody && loginBody.errorText) {
+        throw new Error(`login rejected by risco: ${loginBody.errorText} (attempt ${loginBody.currentLoginAttempt} of ${loginBody.maxLoginAttempts})`)
+    }
+    response = loginBody && loginBody.response
+
+    const { accessToken } = response || {}
     if (!accessToken) throw new Error('no accessToken has been returned from login request');
 
     ({ response } = await request({
@@ -128,6 +143,17 @@ const legacySiteLogin = async (jar, siteId, pinCode) => {
         simple: false
     })
     if (result.statusCode >= 400) throw createUnauthorizedError(`legacy site login failed with status ${result.statusCode}`)
+
+    // A successful site login 302s to the portal's MainPage; a rejected one
+    // (bad pin, locked account) sends us back to the login page instead, with
+    // the same 302 status. Without this check a failed login still sets
+    // legacyLogged, so every later poll fails, triggers another relogin, and
+    // the add-on loops on Risco's login endpoint - which locks the account
+    // after 5 failed attempts.
+    const location = (result.headers && result.headers.location) || ''
+    if (/UserLogin|SessionExpired/i.test(location)) {
+        throw new Error(`legacy site login was rejected (redirected to ${location})`)
+    }
 }
 
 // wuws's systemStatus field doesn't reliably distinguish partial vs full
@@ -154,10 +180,10 @@ const legacyArmDisarm = async (jar, armedState) => {
         form: { type, bypassZoneId: -1 },
         resolveWithFullResponse: true,
         simple: false,
-        // Success always returns 200 JSON directly for this endpoint. A
-        // session-expired request instead 302s to a login page, which
-        // request would otherwise follow silently, turning the expiry into
-        // a fake 200 - disable that so the redirect surfaces as a real error.
+        // The portal has 302'd to a login page on expiry in the past; don't
+        // let request follow that silently and turn it into a fake 200. It
+        // currently answers 200 with `error: 3` instead, handled below -
+        // keep both paths, the endpoint has changed behaviour once already.
         followRedirect: false
     })
 
@@ -165,6 +191,20 @@ const legacyArmDisarm = async (jar, armedState) => {
         throw createUnauthorizedError(`legacy session expired (status ${result.statusCode})`)
     }
     if (result.statusCode >= 400) throw new Error(`legacy ArmDisarm failed with status ${result.statusCode}: ${result.body}`)
+
+    // A 200 is not enough on its own: an expired session answers with
+    // {"error":3} and no side effect, which used to be reported back to Home
+    // Assistant as a successful arm/disarm while the panel never moved.
+    let body
+    try {
+        body = JSON.parse(result.body)
+    } catch (e) {
+        throw createUnauthorizedError(`legacy ArmDisarm returned non-JSON response: ${e.message}`)
+    }
+    if (body.error === LEGACY_ERROR_SESSION_EXPIRED) {
+        throw createUnauthorizedError('legacy ArmDisarm reported an expired session')
+    }
+    if (body.error) throw new Error(`legacy ArmDisarm failed with error ${body.error}`)
 }
 
 const legacyGetOverview = async (jar) => {
@@ -179,8 +219,8 @@ const legacyGetOverview = async (jar) => {
         form: {},
         resolveWithFullResponse: true,
         simple: false,
-        // Same reasoning as ArmDisarm: success is always 200 JSON, a
-        // session-expired request 302s to a login page instead.
+        // Same reasoning as ArmDisarm: don't follow a redirect silently, and
+        // check the body's `error` field below for the 200-shaped expiry.
         followRedirect: false
     })
 
@@ -200,10 +240,18 @@ const legacyGetOverview = async (jar) => {
         throw createUnauthorizedError(`legacy Overview/Get returned non-JSON response: ${e.message}`)
     }
 
-    const armedState = parseLegacyPartInfo(body.overview && body.overview.partInfo)
+    if (body.error === LEGACY_ERROR_SESSION_EXPIRED) {
+        throw createUnauthorizedError('legacy Overview/Get reported an expired session')
+    }
+    if (body.error) throw new Error(`legacy Overview/Get failed with error ${body.error}`)
+    if (!body.overview) throw new Error('legacy Overview/Get returned no overview')
+
+    const armedState = parseLegacyPartInfo(body.overview.partInfo)
     if (!armedState) {
-        console.log(`unrecognized legacy partInfo: ${JSON.stringify(body.overview && body.overview.partInfo)}`)
-        return []
+        // Returning [] here instead of throwing is what made the expiry
+        // invisible: an empty partition list publishes no state, subscribes
+        // to no command topic and skips autodiscovery, all without an error.
+        throw new Error(`unrecognized legacy partInfo: ${JSON.stringify(body.overview.partInfo)}`)
     }
     return [{ id: 0, armedState }]
 }
@@ -230,40 +278,45 @@ module.exports = (config) => {
         legacyLogged = true
     }
 
-    const _setAlarmState = async (state, partitionId) => {
+    // One relogin per call, not unlimited. A permanently failing login (wrong
+    // password, locked account) would otherwise recurse forever, re-logging in
+    // on every 5s poll until Risco locks the account after 5 attempts.
+    const shouldRetry = (error, attempt) => error.statusCode === 401 && attempt === 0
+
+    const _setAlarmState = async (state, partitionId, attempt = 0) => {
         if (!legacyLogged) await _legacyLogin()
         return legacyArmDisarm(legacyJar, state).catch(error => {
-            if (error.statusCode === 401) {
+            if (shouldRetry(error, attempt)) {
                 console.log('refreshing legacy session due to expiry during setting alarm state')
                 legacyLogged = false;
-                return _setAlarmState(state, partitionId)
+                return _setAlarmState(state, partitionId, attempt + 1)
             }
-            throw new Error(error)
+            throw error
         })
     }
 
-    const getPartitions = async () => {
+    const getPartitions = async (attempt = 0) => {
         if (!legacyLogged) await _legacyLogin()
 
         return legacyGetOverview(legacyJar).catch(error => {
-            if (error.statusCode === 401) {
+            if (shouldRetry(error, attempt)) {
                 console.log('refreshing legacy session due to expiry retrieving partitions')
                 legacyLogged = false
-                return getPartitions()
+                return getPartitions(attempt + 1)
             }
-            throw new Error(error)
+            throw error
         })
     }
 
-    const getZones = async () => {
+    const getZones = async (attempt = 0) => {
         if (!logged) await _login()
         return getZoneState(accessToken, sessionId, siteId).catch(error => {
-            if (error.statusCode === 401) {
+            if (shouldRetry(error, attempt)) {
                 console.log('refreshing login due to session expired or invalid token retrieving zones')
                 logged = false;
-                return getZones()
+                return getZones(attempt + 1)
             }
-            throw new Error(error)
+            throw error
         })
     }
 
