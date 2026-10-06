@@ -5,6 +5,11 @@ const ALARM_TOPIC = "riscopanel/alarm"
 const ALARM_TOPIC_REGEX = /^riscopanel\/alarm\/([0-9]+)\/set$/m
 const RISCO_NODE_ID = 'risco-alarm-panel'
 
+// Discovery and state are published retained so that a Home Assistant restart
+// doesn't leave the entities as `unavailable` until the add-on happens to be
+// restarted. The broker replays them to HA as soon as it resubscribes.
+const RETAIN = { retain: true }
+
 module.exports = (config) => {
     let {
         username,
@@ -24,6 +29,9 @@ module.exports = (config) => {
     if (!languageId) throw new Error('languageId options is required')
     if (!mqttURL) throw new Error('mqttURL options is required')
 
+    // HA publishes `online` here when it (re)starts - the birth message.
+    const HASSIO_STATUS_TOPIC = `${HASSIO_DISCOVERY_PREFIX_TOPIC}/status`
+
     const riscoClient = nodeRiscoClient({ username, password, pin, languageId })
     const mqttClient = mqtt.connect(mqttURL, { username: mqttUsername, password: mqttPassword })
 
@@ -32,19 +40,19 @@ module.exports = (config) => {
 
     const disarm = async partitionId => {
         await riscoClient.disarm(partitionId);
-        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'disarmed')
+        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'disarmed', RETAIN)
         return Promise.resolve('disarmed')
     }
 
     const partiallyArm = async partitionId => {
         await riscoClient.partiallyArm(partitionId);
-        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_home')
+        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_home', RETAIN)
         return Promise.resolve('armed_home')
     }
 
     const arm = async partitionId => {
         await riscoClient.arm(partitionId);
-        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_away')
+        mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/status`, 'armed_away', RETAIN)
         return Promise.resolve('armed_away')
     }
 
@@ -56,6 +64,11 @@ module.exports = (config) => {
 
     let pollingInterval
 
+    // Kept so discovery can be re-published on a HA birth message without
+    // waiting for the next poll or hitting the Risco APIs again.
+    let lastPartitions = []
+    let lastZones = []
+
     const subscribeAlarmStateChange = (partitions) => {
         for (const partition of partitions) {
             console.log(`subscribe on ${ALARM_TOPIC}/${partition.id}/set topic`)
@@ -66,22 +79,26 @@ module.exports = (config) => {
     }
 
     const publishAlarmStateChange = (partitions) => {
+        lastPartitions = partitions
         for (const partition of partitions) {
             let state = partition.armedState
-            mqttClient.publish(`${ALARM_TOPIC}/${partition.id}/status`, alarmPayload[state])
+            mqttClient.publish(`${ALARM_TOPIC}/${partition.id}/status`, alarmPayload[state], RETAIN)
             console.log(`published alarm status ${alarmPayload[state]} on partition ${partition.id}`)
         }
     }
 
     const publishSensorsStateChange = (zones) => {
+        lastZones = zones
         for (const zone of zones) {
             const partitionId = zone.part - 1
-            mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}`, JSON.stringify(zone))
-            mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}/status`, sensorPayload[zone.status])
+            mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}`, JSON.stringify(zone), RETAIN)
+            mqttClient.publish(`${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}/status`, sensorPayload[zone.status], RETAIN)
         }
     }
 
     const autoDiscovery = (partitions, zones) => {
+        lastPartitions = partitions
+        lastZones = zones
         for (const partition of partitions) {
             const payload = {
                 'name': `risco-alarm-panel-${partition.id}`,
@@ -93,7 +110,7 @@ module.exports = (config) => {
                 'code_disarm_required': true,
                 'supported_features': ['arm_home', 'arm_night', 'arm_away']
             }
-            mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/alarm_control_panel/${RISCO_NODE_ID}/${partition.id}/config`, JSON.stringify(payload))
+            mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/alarm_control_panel/${RISCO_NODE_ID}/${partition.id}/config`, JSON.stringify(payload), RETAIN)
             console.log(`published alarm_control_panel for homeassistant autodiscovery on partition ${partition.id}`)
         }
 
@@ -108,7 +125,7 @@ module.exports = (config) => {
                 'state_topic': `${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}/status`,
                 'json_attributes_topic': `${ALARM_TOPIC}/${partitionId}/sensor/${zone.zoneID}`
             }
-            mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/binary_sensor/${nodeId}/${zone.zoneID}/config`, JSON.stringify(payload))
+            mqttClient.publish(`${HASSIO_DISCOVERY_PREFIX_TOPIC}/binary_sensor/${nodeId}/${zone.zoneID}/config`, JSON.stringify(payload), RETAIN)
         }
         console.log(`published ${zones.length} binary_sensor for homeassistant autodiscovery`)
     }
@@ -134,9 +151,15 @@ module.exports = (config) => {
 
     mqttClient.on('connect', () => {
         console.log(`connected on mqtt server: ${mqttURL}`)
+        mqttClient.subscribe(HASSIO_STATUS_TOPIC)
+        console.log(`subscribe on ${HASSIO_STATUS_TOPIC} topic`)
         Promise.all([riscoClient.getPartitions(), riscoClient.getZones()]).then(([partitions, zones]) => {
             subscribeAlarmStateChange(partitions)
             autoDiscovery(partitions, zones)
+            // Publish what we already fetched rather than leaving the entities
+            // without a state until the first poll fires.
+            publishAlarmStateChange(partitions)
+            publishSensorsStateChange(zones)
         }).catch(err => {
             console.log(`error during get partitions and zones on connect`)
             console.log(err)
@@ -144,8 +167,26 @@ module.exports = (config) => {
         })
     })
 
+    // HA forgets every discovered entity when it restarts. Retained configs
+    // usually cover that, but re-publishing on the birth message also repairs
+    // the case where the broker lost its retained set (restart without
+    // persistence, or a manually cleared topic).
+    const republishDiscovery = () => {
+        if (!lastPartitions.length && !lastZones.length) {
+            console.log('home assistant is online but nothing discovered yet, skipping re-publish')
+            return
+        }
+        console.log('home assistant is online, re-publishing autodiscovery')
+        autoDiscovery(lastPartitions, lastZones)
+        retrieveAlarmStatus()
+    }
+
     mqttClient.on('message', (topic, message) => {
         let m;
+        if (topic === HASSIO_STATUS_TOPIC) {
+            if (message.toString() === 'online') republishDiscovery()
+            return
+        }
         if ((m = ALARM_TOPIC_REGEX.exec(topic)) !== null) {
             m.filter((match, groupIndex) => groupIndex !== 0).forEach((partitionId) => {
                 const command = message.toString()

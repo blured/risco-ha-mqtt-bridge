@@ -48,17 +48,22 @@ re-login and retry — this repo's code never has to think about token refresh.
 ### 4. On MQTT `connect`
 
 Fires on initial connect and on every auto-reconnect:
-1. Calls `riscoClient.getPartitions()` and `riscoClient.getZones()` in parallel
+1. Subscribes to `homeassistant/status`, the HA birth topic (see §8).
+2. Calls `riscoClient.getPartitions()` and `riscoClient.getZones()` in parallel
    (both hit the same `GetState` endpoint under the hood).
-2. **`subscribeAlarmStateChange`**: subscribes to `riscopanel/alarm/<partitionId>/set`
+3. **`subscribeAlarmStateChange`**: subscribes to `riscopanel/alarm/<partitionId>/set`
    for each partition, and starts a `setInterval` polling loop
    (`retrieveAlarmStatus`) every `interval-polling` ms (default 5s).
-3. **`autoDiscovery`**: publishes Home Assistant MQTT-discovery config payloads —
+4. **`autoDiscovery`**: publishes Home Assistant MQTT-discovery config payloads —
    one `alarm_control_panel` per partition
    (`homeassistant/alarm_control_panel/risco-alarm-panel/<partitionId>/config`)
    and one `binary_sensor` per zone
    (`homeassistant/binary_sensor/<zoneName>/<zoneID>/config`), so entities appear
    in HA automatically with no manual YAML.
+5. Publishes the partitions and zones it just fetched, so the entities have a
+   state immediately instead of waiting up to `interval-polling` ms.
+
+All discovery and state publishes are **retained**.
 
 ### 5. The polling loop — status reporting
 
@@ -243,3 +248,31 @@ was running and publishing zones, but `getPartitions()` returned `[]` on every
 poll so the panel was never discovered. Discovery payloads are published
 without the retain flag, which is why the panel entity disappears entirely
 rather than going stale.
+
+### Fixed (2026-09-29) — entities vanish after every Home Assistant restart
+
+Symptom: after any HA restart, `alarm_control_panel.risco_alarm_panel_0` was
+`unavailable` with `restored: true`, while the add-on log showed a healthy
+`published alarm status armed_home on partition 0` every poll. Restarting the
+add-on brought it back — which is what pointed at discovery rather than at the
+Risco APIs.
+
+Cause: `autoDiscovery` ran only inside the MQTT `connect` handler, and
+published without the retain flag. HA forgets every discovered entity when it
+restarts and rebuilds its registry from retained discovery topics; with nothing
+retained and the add-on not reconnecting, the config was never re-sent.
+
+Fix, two independent belts:
+1. **Retain.** Discovery configs and all state topics
+   (`.../status`, the zone JSON attribute topics, and the three publishes in
+   `disarm`/`partiallyArm`/`arm`) now publish with `{ retain: true }`. The
+   broker replays them the moment HA resubscribes.
+2. **Birth message.** The add-on subscribes to `homeassistant/status` (the HA
+   MQTT integration's default birth topic) and re-publishes discovery plus a
+   fresh poll whenever the payload is `online`. This covers the case where the
+   broker lost its retained set — restart without persistence, or a manually
+   cleared topic. `lastPartitions` / `lastZones` cache the last known
+   partitions and zones so the re-publish needs no extra Risco API call.
+
+The `message` handler returns early for the status topic so a birth message
+never falls through to `ALARM_TOPIC_REGEX`.
